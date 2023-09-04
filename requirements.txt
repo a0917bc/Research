@@ -1,0 +1,7 @@
+datasets
+fvcore
+# matplotlib
+git+https://github.com/tigert1998/runner
+git+https://github.com/tigert1998/qat
+git+https://github.com/tigert1998/opcounter
+git+https://github.com/tigert1998/adb-helper

@@ -1,0 +1,8 @@
+/.hypothesis
+/.ipynb_checkpoints
+/__pycache__
+/adamw.py
+/data
+/lightning_logs
+/log.log
+/prepare.sh
