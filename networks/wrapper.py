@@ -1,8 +1,6 @@
 from timm import create_model
 
 import lightning as L
-from qat.export.utils import replace_module_by_name, fetch_module_by_name
-from operations.amm_linear import AMMLinear, PQLinear, TrivenLinear
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -15,9 +13,9 @@ class LightningWrapper(L.LightningModule):
         super().__init__()
         # self.pretrained = pretrained
         self.lr = lr
+        
         self.model = model
         self.criterion = nn.CrossEntropyLoss()
-    # @torchsnooper.snoop()
     def forward(self, x):
         return self.model(x)
 

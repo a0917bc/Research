@@ -1,14 +1,15 @@
-from transforms.transfer import transfer, AMM_PASS
-from networks.LUTDeiT import create_deit
-from argparse import ArgumentParser
 import os
-import torch
-from torch.utils.data import Subset, DataLoader
-import torchvision.datasets as datasets
+from argparse import ArgumentParser
 
-from lightning.pytorch import seed_everything
-import torchvision.transforms as transforms
 import timm
+import torch
+import torchvision.transforms as transforms
+import torchvision.datasets as datasets
+from torch.utils.data import Subset, DataLoader
+from lightning.pytorch import seed_everything
+
+from networks.LUTDeiT import create_target, Attention2
+from transforms.transfer import transfer, AMM_PASS
 
 
 def load_data(batchSize, numWorkers):
@@ -58,30 +59,31 @@ if __name__ == "__main__":
                     help="Specify the number of dataset to initialize base LUT model. "
                     )
     parser.add_argument("--epoch", type=int, default=100)
-    parser.add_argument("--layer", type=int, default=5, 
+    parser.add_argument("--layer", type=int, default=0, 
                     help="Specify the number of layer to be product-quantized. "
                     )
     parser.add_argument("--stop", type=int, default=12, 
                     help="Specify stopping layer. "
                     )
-
     args = parser.parse_args()
     seed_everything(7)
 
     train_loader = load_data(args.batchSize, args.numWorkers)
-    float_model = timm.create_model('deit3_small_patch16_224.fb_in1k', pretrained=True)
-    target_model = create_deit(args.layer, args.stop)
+    model_name = 'deit3_small_patch16_224.fb_in22k_ft_in1k'
+    # float_model = timm.create_model(model_name, pretrained=True)
+    float_model = torch.load(f"/home/u1887834/Research/notebook/{model_name}.pth") 
+    target_model = create_target(args.layer, args.stop, model_name)
     pass_type = AMM_PASS
     transfer(
         float_model, target_model,
         Subset(train_loader.dataset, 
                range(min(args.num, len(train_loader.dataset))
-            )
+                     )
         ), 
         pass_type
     )
     from pathlib import Path
          
-    save_path = Path('/home/u1887834/Research/base_model')
+    save_path = Path('/home/u1887834/Research/base_model'+"_qk")
     save_path.mkdir(parents=True, exist_ok=True)
     torch.save(target_model.state_dict(), save_path / f"{args.num}_base_{args.layer}_{args.stop}.pt")

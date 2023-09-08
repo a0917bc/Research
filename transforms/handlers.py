@@ -191,9 +191,6 @@ class AMMLinearTransferHandler(TransferHandler):
         module_names = OrderedDict([
             (module, name) for name, module in model.named_modules()
         ])
-        # for name, module in model.named_modules():
-        #     print(module, name)
-        # exit()
         centroids = {}
         from pathlib import Path
         tensor_storage_path = Path('/work/u1887834/tensor_storage')  # Define a path to store the tensors
@@ -212,7 +209,6 @@ class AMMLinearTransferHandler(TransferHandler):
             return getattr(fetch_module_by_name(target_model, module_names[m]), "k")
         collected_modules = list(filter(is_amm_linear, module_names.keys()))
         if not dist.is_initialized() or dist.get_rank() == 0:
-            pq_centroids_list = []
             for linear in collected_modules:
                 module_name = module_names[linear]  # Get the name of the current module
                 print(f"module: {linear}") # Linear(in_features=384, out_features=1152, bias=True) blocks.11.attn.qkv
@@ -238,8 +234,17 @@ class AMMLinearTransferHandler(TransferHandler):
                 # )
                 #### Here build base LUT model
                 print(f"Current dataset number: {len(calibrate_dataset)}")
-                pq_centroids = np.load(tensor_storage_path / f"{len(calibrate_dataset)}_{module_name}_centroids.npy")
-                centroids[linear] = torch.tensor(pq_centroids)
+                
+                module_name = module_name.split(".")
+                # Currently processing module: blocks.5.attn.q_linear
+                if "q_linear" in module_name or "k_linear" in module_name:
+                    print(f"{module_name[0]}.{module_name[1]}.{module_name[2]}.qkv_centroids.npy")
+                    # exit()
+                    pq_centroids = np.load(tensor_storage_path / f"{module_name[0]}.{module_name[1]}.{module_name[2]}.qkv_centroids.npy")
+                    # hand load......                              blocks.0.attn.qkv_centroids
+
+                # pq_centroids = np.load(tensor_storage_path / f"{len(calibrate_dataset)}_{module_name}_centroids.npy")
+                centroids[linear] = torch.tensor(pq_centroids) # also for one run ################
                 ####
                 ### Here save centroids
                 # np.save(tensor_storage_path / f"{len(calibrate_dataset)}_{module_name}_centroids.npy", pq_centroids)

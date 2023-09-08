@@ -4,18 +4,16 @@ import os
 
 # Third-party imports
 import torch
-from torch.utils.data import DataLoader, Subset
+from torch.utils.data import DataLoader
 import torchvision.datasets as datasets
 import torchvision.transforms as transforms
 import lightning as L
 from lightning.pytorch.callbacks import StochasticWeightAveraging
 from timm import create_model
 from timm.data import Mixup, resolve_model_data_config, create_transform
-import torch.nn as nn
-import torch.nn.functional as F
+
 # Custom imports
-from networks.LUTDeiT import LUT_DeiT, Attention2
-from networks.wrapper import LightningWrapper 
+from networks.LUTDeiT import LUT_DeiT, LUT_Distilled_DeiT
 
 def get_args_parser():
     parser = ArgumentParser()
@@ -84,9 +82,9 @@ def get_args_parser():
                         help='How to apply mixup/cutmix params. Per "batch", "pair", or "elem"')
     
     # Others
-    parser.add_argument('--model_name', type=str, default='deit3_small_patch16_224.fb_in1k')
+    parser.add_argument('--model_name', type=str, default='deit3_small_patch16_224.fb_in22k_ft_in1k')
     
-    parser.add_argument("--numWorkers", type=int, default=4)
+    parser.add_argument("--numWorkers", type=int, default=8)
     parser.add_argument("--epoch", type=int, default=100)
     parser.add_argument("--layer", type=int, default=5, 
                     help="Specify the number of layer to be product-quantized. "
@@ -101,15 +99,13 @@ def get_args_parser():
 
 def load_data(batchSize, 
               num_workers,
-              model_name
+              train_transform,
+              val_transform
               ):
     batch_size = batchSize
     traindir = os.path.join("/work/u1887834/imagenet/", 'train')
     valdir = os.path.join("/work/u1887834/imagenet/", 'val')
-    float_model = create_model(model_name, pretrained=False)
-    data_config = resolve_model_data_config(float_model)
-    val_transform = create_transform(**data_config, is_training=False)
-    train_transform = create_transform(**data_config, is_training=True)
+    
 
     train_dataset = datasets.ImageFolder(
         traindir,
@@ -126,7 +122,7 @@ def load_data(batchSize,
         num_workers=num_workers, pin_memory=True, sampler=None)
 
     val_loader = DataLoader(
-        Subset(val_dataset, range(100)), batch_size=batch_size, shuffle=False,
+        val_dataset, batch_size=batch_size, shuffle=False,
         num_workers=num_workers, pin_memory=True, sampler=None)
     return train_loader, val_loader
 
@@ -140,19 +136,28 @@ if __name__ == "__main__":
             prob=args.mixup_prob, switch_prob=args.mixup_switch_prob, mode=args.mixup_mode,
             label_smoothing=args.smoothing, num_classes=1000)
         
-    # compiled_model = LUT_DeiT(kmeans_init=True, # already train on LUT_DeiT?
-    #                           start_replaced_layer_idx = args.layer, 
-    #                           end_replaced_layer_idx=args.stop, 
-    #                           lr=args.lr,
-    #                           num=args.num,
-    #                           distillation_type=args.kd,
-    #                           alpha=args.alpha,
-    #                           tau=args.tau,
-    #                           model_name = args.model_name,
-    #                           weight_decay=args.weight_decay,
-    #                           adam_epsilon=args.opt_eps
-    #                           )
-    
+        
+    compiled_model = LUT_Distilled_DeiT(kmeans_init=True, # already train on LUT_DeiT?
+                              start_replaced_layer_idx = args.layer, 
+                              end_replaced_layer_idx=args.stop, 
+                              lr=args.lr,
+                              num=args.num,
+                              distillation_type=args.kd,
+                              alpha=args.alpha,
+                              tau=args.tau,
+                              model_name = args.model_name,
+                              weight_decay=args.weight_decay,
+                              adam_epsilon=args.opt_eps
+                              )
+    float_model = create_model(args.model_name, pretrained=False)
+    data_config = resolve_model_data_config(float_model)
+    val_transform = create_transform(**data_config, is_training=False)
+    train_transform = create_transform(**data_config, is_training=True)
+    train_loader, val_loader = load_data(args.batchSize, 
+                                         args.numWorkers,
+                                         train_transform,
+                                         val_transform
+                                         )
     trainer = L.Trainer(
         max_epochs=args.epoch,
         precision='16-mixed',
@@ -162,18 +167,8 @@ if __name__ == "__main__":
         enable_progress_bar=True,
         enable_model_summary=True
     )
-    
-    model_name = 'deit3_small_patch16_224.fb_in22k_ft_in1k'
-    # model = create_model(model_name, pretrained=True)
-    
-    print(model_name)
-    # model = create_model(model_name, pretrained=True)
-    model = torch.load(f"/home/u1887834/Research/notebook/{model_name}.pth") # deit3_small_patch16_384.fb_in22k_ft_in1k.pth
-    model.eval() # float_model.eval()
-    print(model)
-    model = LightningWrapper(model)
-    train_loader, val_loader = load_data(args.batchSize,
-                                         args.numWorkers,
-                                         model_name
-                                         )
-    trainer.validate(model, val_loader)
+    # trainer.fit(model=compiled_model,  
+    #             train_dataloaders=train_loader,
+    #             val_dataloaders=val_loader
+    #             )
+    trainer.validate(compiled_model, val_loader)

@@ -8,11 +8,14 @@ from torch.utils.data import DataLoader
 import torchvision.datasets as datasets
 import torchvision.transforms as transforms
 import lightning as L
-from lightning.pytorch.callbacks import StochasticWeightAveraging
+from lightning.pytorch.callbacks import StochasticWeightAveraging, EarlyStopping, LearningRateMonitor, ModelCheckpoint
+from lightning.pytorch.loggers import WandbLogger
+
 from timm import create_model
 from timm.data import Mixup, resolve_model_data_config, create_transform
 # Custom imports
-from networks.LUTDeiT import LUT_DeiT
+from networks.LUTDeiT import LUT_DeiT, LUT_Distilled_DeiT, Attention2
+from ema import EMA
 
 def get_args_parser():
     parser = ArgumentParser()
@@ -20,8 +23,8 @@ def get_args_parser():
     parser.add_argument("--devices", type=int, default=4)
     
     # Knowledge distillation
-    parser.add_argument('--kd', type=str, default="hard", 
-                        help='kd type (default: hard)') 
+    parser.add_argument('--kd', type=str, default="soft", 
+                        help='kd type (default: soft)') 
     parser.add_argument('--alpha', default=0.8, type=float) # 0.8*teacher_loss
     parser.add_argument('--tau', type=float, default=1, 
                         help='kd type (default: hard)') 
@@ -81,7 +84,7 @@ def get_args_parser():
                         help='How to apply mixup/cutmix params. Per "batch", "pair", or "elem"')
     
     # Others
-    parser.add_argument('--model_name', type=str, default='deit3_small_patch16_224.fb_in1k')
+    parser.add_argument('--model_name', type=str, default='deit3_small_patch16_224.fb_in22k_ft_in1k')
     
     parser.add_argument("--numWorkers", type=int, default=8)
     parser.add_argument("--epoch", type=int, default=100)
@@ -94,17 +97,21 @@ def get_args_parser():
     parser.add_argument("--num", type=int, default=120000, 
                     help="Specify the number of dataset to initialize base LUT model. "
                     )
+    parser.add_argument('--resume', type=str, default='rand-m9-mstd0.5-inc1')
+    parser.add_argument('--ckpt', type=str, default=None)
     return parser.parse_args()
 
 def load_data(batchSize, 
               num_workers,
-              train_transform,
-              val_transform
+              float_model
               ):
     batch_size = batchSize
     traindir = os.path.join("/work/u1887834/imagenet/", 'train')
     valdir = os.path.join("/work/u1887834/imagenet/", 'val')
 
+    data_config = resolve_model_data_config(float_model)
+    val_transform = create_transform(**data_config, is_training=False)
+    train_transform = create_transform(**data_config, is_training=True)
     train_dataset = datasets.ImageFolder(
         traindir,
         train_transform
@@ -132,49 +139,56 @@ if __name__ == "__main__":
         mixup_fn = Mixup(
             mixup_alpha=args.mixup, cutmix_alpha=args.cutmix, cutmix_minmax=args.cutmix_minmax,
             prob=args.mixup_prob, switch_prob=args.mixup_switch_prob, mode=args.mixup_mode,
-            label_smoothing=args.smoothing, num_classes=args.nb_classes)
-        
-        
-    compiled_model = LUT_DeiT(kmeans_init=True, # already train on LUT_DeiT?
-                              start_replaced_layer_idx = args.layer, 
-                              end_replaced_layer_idx=args.stop, 
-                              lr=args.lr,
-                              num=args.num,
-                              distillation_type=args.kd,
-                              alpha=args.alpha,
-                              tau=args.tau,
-                              model_name = args.model_name,
-                              weight_decay=args.weight_decay,
-                              adam_epsilon=args.opt_eps
-                              )
-    float_model = create_model(args.model_name, pretrained=False)
-    data_config = resolve_model_data_config(float_model)
-    val_transform = create_transform(**data_config, is_training=False)
-    train_transform = create_transform(**data_config, is_training=True)
-    train_loader, val_loader = load_data(args.batchSize, 
-                                         args.numWorkers,
-                                         train_transform,
-                                         val_transform
-                                         )
+            label_smoothing=args.smoothing, num_classes=1000)
+    args.numWorkers = args.devices * 4
+    float_model = create_model(args.model_name, pretrained=True)
+   
+    train_loader, val_loader = load_data(
+        args.batchSize, 
+        args.numWorkers,
+        float_model
+        )
+    compiled_model = LUT_DeiT(
+        kmeans_init=True,
+        start_replaced_layer_idx = args.layer, 
+        end_replaced_layer_idx=args.stop, 
+        lr=args.lr,
+        max_iters=args.epoch,
+        distillation_type=args.kd,
+        alpha=args.alpha,
+        tau=args.tau,
+        model_name = args.model_name,
+        weight_decay=args.weight_decay,
+        adam_epsilon=args.opt_eps
+        )#.load_from_checkpoint(args.resume)  
+    wandb_logger = WandbLogger(project="BeyondLUTNN")
     trainer = L.Trainer(
+        logger=wandb_logger,
         max_epochs=args.epoch,
-        # precision='16-mixed',
+        precision='16-mixed',
         devices=args.devices,
-        log_every_n_steps=10,
+        # log_every_n_steps=10,
         # profiler="simple", # Once the .fit() function has completed, you’ll see an output.
-        callbacks=[StochasticWeightAveraging(swa_lrs=1e-2)],
-        # strategy='ddp_find_unused_parameters_true',
+        
+        callbacks = [
+            EMA(decay=0.999),
+            # StochasticWeightAveraging(swa_lrs=1e-2),
+            EarlyStopping(monitor="val_acc", mode="max", patience=5), 
+            ModelCheckpoint(monitor='val_loss', save_top_k=1),
+            LearningRateMonitor(logging_interval="epoch")
+            ],
+        strategy='ddp_find_unused_parameters_true',
         enable_progress_bar=True,
         enable_model_summary=True
     )
-    trainer.fit(model=compiled_model,  
-                train_dataloaders=train_loader,
-                val_dataloaders=val_loader
-                )
-# compiled_model = LUT_DeiT(pretrained=True, 
-#                               start_replaced_layer_idx = 8, 
-#                               end_replaced_layer_idx=12, 
-#                               lr=0.0001,
-#                               num=120000)
-
-# compiled_model
+    if args.ckpt is not None:
+        trainer.fit(model=compiled_model,  
+                    train_dataloaders=train_loader,
+                    val_dataloaders=val_loader,
+                    ckpt_path=args.ckpt
+                    )
+    else:
+        trainer.fit(model=compiled_model,  
+                    train_dataloaders=train_loader,
+                    val_dataloaders=val_loader
+                    )

@@ -13,7 +13,7 @@ class DistillationLoss(torch.nn.Module):
     taking a teacher model prediction and using it as additional supervision.
     """
     def __init__(self,
-                base_criterion: torch.nn.Module, 
+                 base_criterion: torch.nn.Module, 
                  teacher_model: torch.nn.Module,
                  distillation_type: str, 
                  alpha: float, 
@@ -78,8 +78,41 @@ class DistillationLoss(torch.nn.Module):
         #     #see issue 61(https://github.com/facebookresearch/deit/issues/61) for more details
         elif self.distillation_type == 'hard':
             # distillation_loss = F.cross_entropy(outputs_kd, teacher_outputs.argmax(dim=1))
-            distillation_loss = F.cross_entropy(outputs, teacher_outputs.argmax(dim=1)) # TODO lab1:cross_entropy with teacher -> hard_distill
-            # distillation_loss = F.binary_cross_entropy_with_logits(outputs, teacher_outputs) # TODO lab2:binary_cross_entropy_with_logits
-            
+            distillation_loss = F.cross_entropy(outputs, teacher_outputs.argmax(dim=1)) 
+            # distillation_loss = F.binary_cross_entropy_with_logits(outputs, teacher_outputs) 
         loss = base_loss * (1 - self.alpha) + distillation_loss * self.alpha
+        return loss
+
+
+class DistillationLoss_v2(torch.nn.Module):
+    """
+    This module wraps a standard criterion and adds an extra knowledge distillation loss by
+    taking a teacher model prediction and using it as additional supervision.
+    """
+    def __init__(self,
+                 distillation_type: str,
+                 tau: float):
+        super().__init__()
+        assert distillation_type in ['none', 'soft', 'hard']
+        self.distillation_type = distillation_type
+        self.tau = tau
+
+    def forward(self, student_outputs, teacher_outputs):
+        if self.distillation_type == 'none':
+            raise ValueError("你別用這個loss")
+
+        if self.distillation_type == 'soft':
+            T = self.tau
+            distillation_loss = F.kl_div(
+                F.log_softmax(student_outputs / T, dim=1),
+                F.log_softmax(teacher_outputs / T, dim=1),
+                reduction='sum',
+                log_target=True
+            ) * (T * T) / student_outputs.numel()
+        
+        elif self.distillation_type == 'hard':
+            # distillation_loss = F.cross_entropy(outputs_kd, teacher_outputs.argmax(dim=1))
+            distillation_loss = F.cross_entropy(student_outputs, teacher_outputs.argmax(dim=1)) 
+            # distillation_loss = F.binary_cross_entropy_with_logits(outputs, teacher_outputs) 
+        loss = distillation_loss
         return loss
