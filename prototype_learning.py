@@ -86,4 +86,5 @@ if __name__ == "__main__":
          
     save_path = Path('/home/u1887834/Research/base_model'+"_qk")
     save_path.mkdir(parents=True, exist_ok=True)
-    torch.save(target_model.state_dict(), save_path / f"{args.num}_base_{args.layer}_{args.stop}.pt")
+    # torch.save(target_model.state_dict(), save_path / f"{args.num}_base_{args.layer}_{args.stop}.pt")
+    torch.save(target_model, save_path / f"{args.num}_base_{args.layer}_{args.stop}.pt")

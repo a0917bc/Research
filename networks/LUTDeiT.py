@@ -53,6 +53,7 @@ def create_target(start_replaced_layer_idx, end_replaced_layer_idx, model_name, 
 
 class LUT_DeiT(L.LightningModule):
     def __init__(self, 
+                 model = None,
                  kmeans_init=False, 
                  start_replaced_layer_idx=0, 
                  end_replaced_layer_idx=12, 
@@ -75,15 +76,50 @@ class LUT_DeiT(L.LightningModule):
         self.float_model = torch.compile(float_model)
         
         self.save_hyperparameters()
-        self.model = create_target(start_replaced_layer_idx, end_replaced_layer_idx, model_name=model_name)
-        if kmeans_init:
-            from pathlib import Path   
-            save_path = Path('/home/u1887834/Research/old_base_model') # TODO .... 
-            # self.model.load_state_dict(torch.load(save_path / f"{num}_base_{start_replaced_layer_idx}_{end_replaced_layer_idx}.pt"))
-            self.model.load_state_dict(torch.load(f"/home/u1887834/Research/base_model_qk/{model_name}_120000_base_0_12.pt"))
-                                                   #/home/u1887834/Research/base_model_qk/deit3_small_patch16_224.fb_in22k_ft_in1k_120000_base_0_12.pt
-        print(self.model)
-        exit()
+        # self.model = create_target(start_replaced_layer_idx, end_replaced_layer_idx, model_name=model_name)
+        # if kmeans_init:
+        #     from pathlib import Path   
+        #     save_path = Path('/home/u1887834/Research/old_base_model') # TODO .... 
+        #     # self.model.load_state_dict(torch.load(save_path / f"{num}_base_{start_replaced_layer_idx}_{end_replaced_layer_idx}.pt"))
+        #     self.model.load_state_dict(torch.load(f"/home/u1887834/Research/base_model_qk/{model_name}_120000_base_0_12.pt"))
+        #                                            #/home/u1887834/Research/base_model_qk/deit3_small_patch16_224.fb_in22k_ft_in1k_120000_base_0_12.pt
+        from pathlib import Path   
+        save_path = Path('/home/u1887834/Research/base_model_qk')
+        if model is not None:
+            self.model = model
+        for l in range(12):
+            for name, param in self.model.blocks[l].named_parameters():
+                # if 'attn.q_linear' in name or 'attn.k_linear' in name:
+                #     param.requires_grad = True
+                if 'attn.q_linear.centroids' in name or 'attn.k_linear.centroids' in name or 'inverse_temperature_logit' in name:
+                    param.requires_grad = True
+                
+                elif "patch_embed" in name:
+                    param.requires_grad = False
+                
+                elif "norm" in name:
+                    param.requires_grad = False
+                
+                elif "head" in name:
+                    param.requires_grad = False
+                
+                else:
+                    param.requires_grad = False
+        self.model.patch_embed.proj.weight.requires_grad = False
+        self.model.cls_token.requires_grad = False
+        self.model.pos_embed.requires_grad = False
+        self.model.patch_embed.proj.bias.requires_grad = False
+        self.model.norm.weight.requires_grad = False
+        self.model.norm.bias.requires_grad = False
+        self.model.head.weight.requires_grad = False
+        self.model.head.bias.requires_grad = False
+        # print(self.model.patch_embed.requires_grad)
+        for name, param in self.model.named_parameters():
+            if param.requires_grad:
+                print(f"Parameter: {name}, Requires Gradient: {param.requires_grad}")
+
+        # print(self.model)
+        # exit()
         # loss
         self.criterion = LabelSmoothingCrossEntropy(smoothing=smoothing)
         # self.distil_loss = DistillationLoss(base_criterion=self.criterion, 
@@ -271,7 +307,6 @@ class Argmax_DeiT(L.LightningModule):
     def lr_scheduler_step(self, scheduler, metric):
         scheduler.step(epoch=self.current_epoch)  # timm's scheduler need the epoch value
         
-
 class LUT_Distilled_DeiT(L.LightningModule):
     def __init__(self, 
                  kmeans_init=True, 

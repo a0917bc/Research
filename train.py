@@ -148,7 +148,11 @@ if __name__ == "__main__":
         args.numWorkers,
         float_model
         )
+    from pathlib import Path   
+    save_path = Path('/home/u1887834/Research/base_model_qk')
+    model = torch.load(save_path / "deit3_base_0_12.pt")
     compiled_model = LUT_DeiT(
+        model=model,
         kmeans_init=True,
         start_replaced_layer_idx = args.layer, 
         end_replaced_layer_idx=args.stop, 
@@ -162,6 +166,7 @@ if __name__ == "__main__":
         adam_epsilon=args.opt_eps
         )#.load_from_checkpoint(args.resume)  
     wandb_logger = WandbLogger(project="BeyondLUTNN")
+    wandb_logger.watch(model, log_freq=100)
     trainer = L.Trainer(
         logger=wandb_logger,
         max_epochs=args.epoch,
@@ -169,7 +174,6 @@ if __name__ == "__main__":
         devices=args.devices,
         # log_every_n_steps=10,
         # profiler="simple", # Once the .fit() function has completed, you’ll see an output.
-        
         callbacks = [
             EMA(decay=0.999),
             # StochasticWeightAveraging(swa_lrs=1e-2),
