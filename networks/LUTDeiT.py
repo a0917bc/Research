@@ -11,20 +11,24 @@ from timm import create_model
 from timm.layers import use_fused_attn
 from timm.scheduler import CosineLRScheduler
 
+from pprint import pprint
+
 from qat.export.utils import replace_module_by_name, fetch_module_by_name
 from operations.amm_linear import AMMLinear, PQLinear, TrivenLinear
 from losses import DistillationLoss, DistillationLoss_v2
+from .vision_transformer import VisionTransformer
 
 def create_target(start_replaced_layer_idx, end_replaced_layer_idx, model_name, subvec_len=32, k=16):
     # model = torch.load(f"/home/u1887834/Research/notebook/{model_name}_120000_base_0_12.pth") # deit3_small_patch16_224.fb_in22k_ft_in1k
                         # deit3_small_patch16_224.fb_in22k_ft_in1k_120000_base_0_12
-    model = torch.load(f"/home/u1887834/Research/notebook/{model_name}.pth")
+    # model = torch.load(f"/home/u1887834/Research/notebook/{model_name}.pth")
     # model = create_model("deit3_small_patch16_224.fb_in1k", pretrained=False)
+    model = create_model(model_name=model_name, pretrained=False)
     ncodebooks = {
-        # "attn.qkv": 384 // subvec_len,
-        "attn.q_linear": 384 // subvec_len, 
-        "attn.k_linear": 384 // subvec_len, 
-        # "mlp.fc1": 384 // subvec_len
+        "attn.qkv": 384 // subvec_len,
+        # "attn.q_linear": 384 // subvec_len, 
+        # "attn.k_linear": 384 // subvec_len, 
+        "mlp.fc1": 384 // subvec_len
         # "mlp.fc2": 1536 // subvec_len
     }
     
@@ -33,6 +37,7 @@ def create_target(start_replaced_layer_idx, end_replaced_layer_idx, model_name, 
             layer = model.blocks[i]
             module = fetch_module_by_name(layer, name)
             amm_linear = AMMLinear(
+            # amm_linear = PQLinear(
                 ncodebooks[name],
                 module.in_features,
                 module.out_features,
@@ -75,7 +80,7 @@ class LUT_DeiT(L.LightningModule):
             param.requires_grad = False
         self.float_model = torch.compile(float_model)
         
-        self.save_hyperparameters()
+        self.save_hyperparameters(ignore=['model'])
         # self.model = create_target(start_replaced_layer_idx, end_replaced_layer_idx, model_name=model_name)
         # if kmeans_init:
         #     from pathlib import Path   
@@ -87,39 +92,38 @@ class LUT_DeiT(L.LightningModule):
         save_path = Path('/home/u1887834/Research/base_model_qk')
         if model is not None:
             self.model = model
-        for l in range(12):
-            for name, param in self.model.blocks[l].named_parameters():
-                # if 'attn.q_linear' in name or 'attn.k_linear' in name:
-                #     param.requires_grad = True
-                if 'attn.q_linear.centroids' in name or 'attn.k_linear.centroids' in name or 'inverse_temperature_logit' in name:
-                    param.requires_grad = True
+            
+        # for l in range(12):
+        #     for name, param in self.model.blocks[l].named_parameters():
+        #         # if 'attn.q_linear' in name or 'attn.k_linear' in name:
+        #         #     param.requires_grad = True
+        #         if 'attn.q_linear.centroids' in name or 'attn.k_linear.centroids' in name or 'inverse_temperature_logit' in name:
+        #             param.requires_grad = True
                 
-                elif "patch_embed" in name:
-                    param.requires_grad = False
+        #         elif "patch_embed" in name:
+        #             param.requires_grad = False
                 
-                elif "norm" in name:
-                    param.requires_grad = False
+        #         elif "norm" in name:
+        #             param.requires_grad = False
                 
-                elif "head" in name:
-                    param.requires_grad = False
+        #         elif "head" in name:
+        #             param.requires_grad = False
                 
-                else:
-                    param.requires_grad = False
-        self.model.patch_embed.proj.weight.requires_grad = False
-        self.model.cls_token.requires_grad = False
-        self.model.pos_embed.requires_grad = False
-        self.model.patch_embed.proj.bias.requires_grad = False
-        self.model.norm.weight.requires_grad = False
-        self.model.norm.bias.requires_grad = False
-        self.model.head.weight.requires_grad = False
-        self.model.head.bias.requires_grad = False
-        # print(self.model.patch_embed.requires_grad)
-        for name, param in self.model.named_parameters():
-            if param.requires_grad:
-                print(f"Parameter: {name}, Requires Gradient: {param.requires_grad}")
+        #         else:
+        #             param.requires_grad = False
+        # self.model.patch_embed.proj.weight.requires_grad = False
+        # self.model.cls_token.requires_grad = False
+        # self.model.pos_embed.requires_grad = False
+        # self.model.patch_embed.proj.bias.requires_grad = False
+        # self.model.norm.weight.requires_grad = False
+        # self.model.norm.bias.requires_grad = False
+        # self.model.head.weight.requires_grad = False
+        # self.model.head.bias.requires_grad = False
+        # # print(self.model.patch_embed.requires_grad)
+        # for name, param in self.model.named_parameters():
+        #     if param.requires_grad:
+        #         print(f"Parameter: {name}, Requires Gradient: {param.requires_grad}")
 
-        # print(self.model)
-        # exit()
         # loss
         self.criterion = LabelSmoothingCrossEntropy(smoothing=smoothing)
         # self.distil_loss = DistillationLoss(base_criterion=self.criterion, 
@@ -146,6 +150,8 @@ class LUT_DeiT(L.LightningModule):
         return 0.2*base_loss + 0.8*distill_loss
     def common_step(self, x, y, stage):
         logits = self(x)
+        # pprint(logits.shape)
+        # pprint(y.shape)
         loss = self.criterion(logits, y)
         acc = (logits.argmax(dim=-1) == y).float().mean()
         self.log(f"{stage}_loss", loss, on_epoch=True, sync_dist=True)
@@ -191,6 +197,7 @@ class LUT_DeiT(L.LightningModule):
         optimizer = torch.optim.AdamW(optimizer_grouped_parameters, lr=self.hparams.lr, eps=self.hparams.adam_epsilon)
         scheduler = CosineLRScheduler(optimizer, cycle_limit=1, t_initial = self.hparams.max_iters)
         return [optimizer], [{"scheduler": scheduler, "interval": "epoch"}]
+    
     def lr_scheduler_step(self, scheduler, metric):
         scheduler.step(epoch=self.current_epoch)  # timm's scheduler need the epoch value
         
@@ -212,16 +219,17 @@ class Argmax_DeiT(L.LightningModule):
                  weight_decay=0.1
                  ):
         super().__init__()
-        # float_model = create_model(model_name, pretrained=True)
-        # float_model.eval()
-        # for param in float_model.parameters():
-        #     param.requires_grad = False
-        # self.float_model = torch.compile(float_model)
-        
         self.save_hyperparameters()
         # self.model = torch.load(f"/home/u1887834/Research/notebook/argmax_{model_name}.pth") # deit3_small_patch16_224.fb_in22k_ft_in1k
                                # "/home/u1887834/Research/notebook/argmax_deit3_small_patch16_224.fb_in22k_ft_in1k.pth"
-        self.model = create_model(f"{model_name}", pretrained=True)
+        # self.model = torch.load(f"/home/u1887834/Research/{model_name}.pth")
+        self.model = VisionTransformer(weight_init="skip", embed_dim=384, num_heads=6, class_token=True)
+        # print(model_name)
+        # exit()
+        self.model.load_state_dict(torch.load(f"/home/u1887834/Research/{model_name}.pth"))
+        print(self.model)
+        # self.model = create_model(f"{model_name}", pretrained=True)
+        # self.model = create_model(f"{model_name}", pretrained=True)
         if kmeans_init:
             from pathlib import Path   
             save_path = Path('/home/u1887834/Research/old_base_model') # TODO .... 
@@ -465,7 +473,7 @@ class Attention2(nn.Module):
         self.q_linear = nn.Linear(dim, dim, bias=qkv_bias)
         self.k_linear = nn.Linear(dim, dim, bias=qkv_bias)
         self.v_linear = nn.Linear(dim, dim, bias=qkv_bias)
-
+        self.attn_score = AttnScore(scale=self.scale, attn_drop=attn_drop)
         self.q_norm = norm_layer(self.head_dim) if qk_norm else nn.Identity()
         self.k_norm = norm_layer(self.head_dim) if qk_norm else nn.Identity()
         self.attn_drop = nn.Dropout(attn_drop)
@@ -482,22 +490,36 @@ class Attention2(nn.Module):
 
         q, k = self.q_norm(q), self.k_norm(k)
 
-        if self.fused_attn:
-            x = F.scaled_dot_product_attention(
-                q, k, v,
-                dropout_p=self.attn_drop.p,
-            )
-        else:
-            q = q * self.scale
-            attn = q @ k.transpose(-2, -1)
-            attn = attn.softmax(dim=-1)
-            attn = self.attn_drop(attn)
-            x = attn @ v
-
+        # if self.fused_attn:
+        #     x = F.scaled_dot_product_attention(
+        #         q, k, v,
+        #         dropout_p=self.attn_drop.p,
+        #     )
+        # else:
+        #     # q = q * self.scale
+        #     # attn = q @ k.transpose(-2, -1)
+        #     # attn = attn.softmax(dim=-1)
+        #     # attn = self.attn_drop(attn)
+        #     attn = self.attn_score(q, k)
+        #     x = attn @ v
+        attn = self.attn_score(q, k)
+        x = attn @ v
         x = x.transpose(1, 2).reshape(B, N, C)
         x = self.proj(x)
         x = self.proj_drop(x)
         return x
+
+class AttnScore(nn.Module):
+    def __init__(self, scale, attn_drop):
+        super().__init__()
+        self.scale = scale
+        self.attn_drop = nn.Dropout(attn_drop) # one is func. another one is probability.
+    def forward(self, q, k):
+        q = q * self.scale
+        attn = q @ k.transpose(-2, -1)
+        attn = attn.softmax(dim=-1)
+        attn = self.attn_drop(attn)
+        return attn
 
 class Attention3(nn.Module):
     fused_attn: Final[bool]
@@ -517,8 +539,9 @@ class Attention3(nn.Module):
         self.head_dim = dim // num_heads
         self.scale = self.head_dim ** -0.5
         self.fused_attn = use_fused_attn()
-
+        self.attn_score = AttnScore(scale=self.scale, attn_drop=attn_drop)
         self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
+        
         self.q_norm = norm_layer(self.head_dim) if qk_norm else nn.Identity()
         self.k_norm = norm_layer(self.head_dim) if qk_norm else nn.Identity()
         self.attn_drop = nn.Dropout(attn_drop)
@@ -531,20 +554,21 @@ class Attention3(nn.Module):
         q, k, v = qkv.unbind(0)
         q, k = self.q_norm(q), self.k_norm(k)
 
-        if self.fused_attn:
-            x = F.scaled_dot_product_attention(
-                q, k, v,
-                dropout_p=self.attn_drop.p,
-            )
-        else:
-            q = q * self.scale
-            attn = q @ k.transpose(-2, -1)
-            # attn = attn.softmax(dim=-1)
-            attn_argmax = attn.argmax(dim=-1)
-            attn = self.attn_drop(attn)
-            # output = attn - (attn - attn_argmax).detach() # output = real_output - (real_output - quantized_output).detach()
-            x = attn_argmax @ v
-
+        # if self.fused_attn:
+        #     x = F.scaled_dot_product_attention(
+        #         q, k, v,
+        #         dropout_p=self.attn_drop.p,
+        #     )
+        # else:
+        #     q = q * self.scale
+        #     attn = q @ k.transpose(-2, -1)
+        #     # attn = attn.softmax(dim=-1)
+        #     attn_argmax = attn.argmax(dim=-1)
+        #     attn = self.attn_drop(attn)
+        #     # output = attn - (attn - attn_argmax).detach() # output = real_output - (real_output - quantized_output).detach()
+        #     x = attn_argmax @ v
+        attn = self.attn_score(q, k)
+        x = attn @ v
         x = x.transpose(1, 2).reshape(B, N, C)
         x = self.proj(x)
         x = self.proj_drop(x)

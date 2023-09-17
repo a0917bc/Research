@@ -14,12 +14,12 @@ from lightning.pytorch.loggers import WandbLogger
 from timm import create_model
 from timm.data import Mixup, resolve_model_data_config, create_transform
 # Custom imports
-from networks.LUTDeiT import LUT_DeiT, LUT_Distilled_DeiT, Attention2, Attention3, Argmax_DeiT
+from networks.LUTDeiT import LUT_DeiT, LUT_Distilled_DeiT, Attention2, Attention3, Argmax_DeiT, AttnScore
 
 def get_args_parser():
     parser = ArgumentParser()
     # Trainer arguments
-    parser.add_argument("--devices", type=int, default=4)
+    parser.add_argument("--devices", type=int, default=1)
     
     # Knowledge distillation
     parser.add_argument('--kd', type=str, default="soft", 
@@ -128,7 +128,9 @@ def load_data(batchSize,
         num_workers=num_workers, pin_memory=True, sampler=None)
 
     val_loader = DataLoader(
-        val_dataset, batch_size=batch_size, shuffle=False,
+        # val_dataset, 
+        Subset(val_dataset, range(192*10)),
+        batch_size=batch_size, shuffle=False,
         num_workers=num_workers, pin_memory=True, sampler=None)
     return train_loader, val_loader
 
@@ -175,8 +177,8 @@ if __name__ == "__main__":
             LearningRateMonitor(logging_interval="epoch")
             ],
         strategy='ddp_find_unused_parameters_true',
-        enable_progress_bar=True,
-        enable_model_summary=True
+        # enable_progress_bar=True,
+        # enable_model_summary=True
     )
     # if args.ckpt is not None:
     #     trainer.fit(model=compiled_model,  

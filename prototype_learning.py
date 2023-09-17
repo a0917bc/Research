@@ -69,7 +69,8 @@ if __name__ == "__main__":
     seed_everything(7)
 
     train_loader = load_data(args.batchSize, args.numWorkers)
-    model_name = 'deit3_small_patch16_224.fb_in22k_ft_in1k'
+    model_name = 'deit3_small_patch16_224.fb_in22k_ft_in1k' # 很久以前蒐集的Centroids，我記得是用 deit3_small_patch16_224.fb_in1k
+
     # float_model = timm.create_model(model_name, pretrained=True)
     float_model = torch.load(f"/home/u1887834/Research/notebook/{model_name}.pth") 
     target_model = create_target(args.layer, args.stop, model_name)

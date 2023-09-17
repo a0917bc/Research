@@ -20,7 +20,7 @@ def collect_input_tensors(
         return {}
 
     input_tensors = []
-    def hook(module, input_tensor, output_tensor):
+    def hook(module, input_tensor, output_tensor): # The hook will be called every time after :func:`forward` has computed an output.
         if is_input_tensor:
             assert len(input_tensor) == 1
             tensor = input_tensor[0].cpu()

@@ -107,9 +107,6 @@ class AMMLinear(nn.Module):
 
         return self._forward(x, quantized_lut)
 
-
-# -
-
 class TrivenLinear(nn.Module):
     def __init__(
         self,

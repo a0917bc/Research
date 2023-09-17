@@ -7,7 +7,7 @@
 /log.log
 /prepare.sh
 /base_model
-/old_base_model
+/base_model_old
 /base_model_qk
 /notebook/*.pth
 /wandb

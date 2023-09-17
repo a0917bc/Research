@@ -14,7 +14,7 @@ from lightning.pytorch.loggers import WandbLogger
 from timm import create_model
 from timm.data import Mixup, resolve_model_data_config, create_transform
 # Custom imports
-from networks.LUTDeiT import LUT_DeiT, LUT_Distilled_DeiT, Attention2
+from networks.LUTDeiT import LUT_DeiT, LUT_Distilled_DeiT, Attention2, create_target
 from ema import EMA
 
 def get_args_parser():
@@ -150,8 +150,15 @@ if __name__ == "__main__":
         )
     from pathlib import Path   
     save_path = Path('/home/u1887834/Research/base_model_qk')
-    model = torch.load(save_path / "deit3_base_0_12.pt")
-    compiled_model = LUT_DeiT(
+    old_model_path = Path("/home/u1887834/Research/old_base_model")
+    # model = torch.load(save_path / "deit3_base_0_12.pt")
+    model = create_target(9, 12, "deit3_small_patch16_224.fb_in1k") # student model ft ImageNet1k 
+    # torch.nn.Module.load_state_dict
+    model.load_state_dict(torch.load(old_model_path / "120000_base_9_12.pt"))
+    # model = torch.load(old_model_path / "120000_base_9_12.pt")
+    # print(model)
+    # exit()
+    pl_model = LUT_DeiT(
         model=model,
         kmeans_init=True,
         start_replaced_layer_idx = args.layer, 
@@ -177,7 +184,7 @@ if __name__ == "__main__":
         callbacks = [
             EMA(decay=0.999),
             # StochasticWeightAveraging(swa_lrs=1e-2),
-            EarlyStopping(monitor="val_acc", mode="max", patience=5), 
+            EarlyStopping(monitor="val_acc", mode="max", patience=3), 
             ModelCheckpoint(monitor='val_loss', save_top_k=1),
             LearningRateMonitor(logging_interval="epoch")
             ],
@@ -186,13 +193,13 @@ if __name__ == "__main__":
         enable_model_summary=True
     )
     if args.ckpt is not None:
-        trainer.fit(model=compiled_model,  
+        trainer.fit(model=pl_model,  
                     train_dataloaders=train_loader,
                     val_dataloaders=val_loader,
                     ckpt_path=args.ckpt
                     )
     else:
-        trainer.fit(model=compiled_model,  
+        trainer.fit(model=pl_model,  
                     train_dataloaders=train_loader,
                     val_dataloaders=val_loader
                     )
