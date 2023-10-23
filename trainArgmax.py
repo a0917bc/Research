@@ -15,6 +15,7 @@ from timm import create_model
 from timm.data import Mixup, resolve_model_data_config, create_transform
 # Custom imports
 from networks.LUTDeiT import LUT_DeiT, LUT_Distilled_DeiT, Attention2, Attention3, Argmax_DeiT, AttnScore
+from ema import EMA
 
 def get_args_parser():
     parser = ArgumentParser()
@@ -128,8 +129,8 @@ def load_data(batchSize,
         num_workers=num_workers, pin_memory=True, sampler=None)
 
     val_loader = DataLoader(
-        # val_dataset, 
-        Subset(val_dataset, range(192*10)),
+        val_dataset, 
+        # Subset(val_dataset, range(192*10)),
         batch_size=batch_size, shuffle=False,
         num_workers=num_workers, pin_memory=True, sampler=None)
     return train_loader, val_loader
@@ -151,7 +152,9 @@ if __name__ == "__main__":
         args.numWorkers,
         float_model
         )
+    model = torch.load(f"/home/u1887834/Research/notebook/{args.model_name}.pth")
     compiled_model = Argmax_DeiT(
+        model=model,
         kmeans_init=False,
         start_replaced_layer_idx = args.layer, 
         end_replaced_layer_idx=args.stop, 
@@ -163,33 +166,37 @@ if __name__ == "__main__":
         model_name = args.model_name,
         weight_decay=args.weight_decay,
         adam_epsilon=args.opt_eps
-        )#.load_from_checkpoint(args.resume)  
-    # wandb_logger = WandbLogger(project="BeyondLUTNN")
+        )
+    wandb_logger = WandbLogger(project="BeyondLUTNN")
+    wandb_logger.watch(model, log_freq=100)
     trainer = L.Trainer(
-        # logger=wandb_logger,
+        logger=wandb_logger,
         max_epochs=args.epoch,
         precision='16-mixed',
         devices=args.devices,
+        accumulate_grad_batches=2,
+        log_every_n_steps=10,
+        # profiler="simple", # Once the .fit() function has completed, you’ll see an output.
         callbacks = [
-            # StochasticWeightAveraging(swa_lrs=1e-2),
-            # EarlyStopping(monitor="val_acc", mode="max", patience=10),
-            # ModelCheckpoint(monitor='val_loss', save_top_k=1),
+            EMA(decay=0.999), # TODO
+            EarlyStopping(monitor="val_acc", mode="max", patience=5), 
+            ModelCheckpoint(monitor='val_loss', save_top_k=1),
             LearningRateMonitor(logging_interval="epoch")
             ],
         strategy='ddp_find_unused_parameters_true',
-        # enable_progress_bar=True,
-        # enable_model_summary=True
+        enable_progress_bar=True,
+        enable_model_summary=True
     )
-    # if args.ckpt is not None:
-    #     trainer.fit(model=compiled_model,  
-    #                 train_dataloaders=train_loader,
-    #                 val_dataloaders=val_loader,
-    #                 ckpt_path=args.ckpt
-    #                 )
-    # else:
-    #     trainer.fit(model=compiled_model,  
-    #                 train_dataloaders=train_loader,
-    #                 val_dataloaders=val_loader
-    #                 )
-    trainer.validate(compiled_model, val_loader)
+    if args.ckpt is not None:
+        trainer.fit(model=compiled_model,  
+                    train_dataloaders=train_loader,
+                    val_dataloaders=val_loader,
+                    ckpt_path=args.ckpt
+                    )
+    else:
+        trainer.fit(model=compiled_model,  
+                    train_dataloaders=train_loader,
+                    val_dataloaders=val_loader
+                    )
+    # trainer.validate(compiled_model, val_loader)
     

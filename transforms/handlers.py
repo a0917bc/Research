@@ -35,19 +35,20 @@ def train_pq_4GPU(d, ncodebooks, num_centroids, data: np.ndarray) -> Tuple[np.nd
     devices = [8, 4, 2, 1]  # 這些是 2 的冪次方值，分別對應於第 1, 2, 3, 4 張 GPU
     subvec_len = d // ncodebooks
     centroids = np.empty((ncodebooks, num_centroids, subvec_len), dtype=np.float32)
-    
-    with ProcessPoolExecutor(max_workers=4) as executor:
-        futures = []
-        for i in range(4):  # 因為有四張 GPU
-            for j in tqdm(range(3), desc="Processing codebooks"):  # 每張 GPU 計算三組數據
+    N,D = data.shape
+    data = np.reshape(data, (12, N, D//12))
+    for j in range(3):  # 每張 GPU 計算三組數據
+        with ProcessPoolExecutor(max_workers=4) as executor: # better memory efficient
+            futures = []
+            for i in range(4):  # 因為有四張 GPU
                 idx = i * 3 + j  # 數據集的索引
-                tmp_data = data[:, idx * subvec_len: (idx + 1) * subvec_len] # data[:, i * subvec_len: (i + 1) * subvec_len]
+                tmp_data = data[idx] 
                 # print(tmp_data.shape) # (batch * patch, subvec_len)
                 future = executor.submit(run_kmeans_on_device, tmp_data, device=devices[i])
                 futures.append((idx, future))
-        
-        for idx, future in futures:
-            centroids[idx] = future.result() # future.result() -> kmcuda_centroids
+            
+            for idx, future in futures:
+                centroids[idx] = future.result() # future.result() -> kmcuda_centroids
     return centroids, 0
 
 def train_pq(d, ncodebooks, num_centroids, data: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
@@ -208,24 +209,25 @@ class AMMLinearTransferHandler(TransferHandler):
         def num_centroids(m):
             return getattr(fetch_module_by_name(target_model, module_names[m]), "k")
         collected_modules = list(filter(is_amm_linear, module_names.keys()))
+        collected_modules.reverse()
         if not dist.is_initialized() or dist.get_rank() == 0:
             for linear in collected_modules:
                 module_name = module_names[linear]  # Get the name of the current module
                 print(f"module: {linear}") # Linear(in_features=384, out_features=1152, bias=True) blocks.11.attn.qkv
                 print(f"Currently processing module: {module_name}")  # Print the name
                 
-                # input_tensors = collect_input_tensors(
-                #     model, 
-                #     module_name, 
-                #     calibrate_dataset,
-                #     lambda m: m == linear,  # Collect for this specific module
-                #     batch_size=128
-                # )
+                input_tensors = collect_input_tensors(
+                    model, 
+                    module_name, 
+                    calibrate_dataset,
+                    lambda m: m == linear,  # Collect for this specific module
+                    batch_size=128
+                )
                 
-                # input_tensors = input_tensors.flatten(0, -2).cpu().numpy()
-                # np.save(tensor_storage_path / f"{module_name}.npy", input_tensors)
+                input_tensors = input_tensors.flatten(0, -2).cpu().numpy()
+                np.save(tensor_storage_path / f"{module_name}.npy", input_tensors)
                 
-                # pq_centroids, _ = train_pq( # train_pq
+                # pq_centroids, _ = train_pq_4GPU( # train_pq
                 #     linear.in_features,
                 #     ncodebooks(linear),
                 #     num_centroids(linear),
@@ -233,26 +235,27 @@ class AMMLinearTransferHandler(TransferHandler):
                     
                 # )
                 #### Here build base LUT model
-                print(f"Current dataset number: {len(calibrate_dataset)}")
+                # print(f"Current dataset number: {len(calibrate_dataset)}")
                 
-                module_name = module_name.split(".")
+                # module_name = module_name.split(".")
                 # Currently processing module: blocks.5.attn.q_linear
-                if "q_linear" in module_name or "k_linear" in module_name:
-                    print(f"{module_name[0]}.{module_name[1]}.{module_name[2]}.qkv_centroids.npy")
-                    # exit()
-                    pq_centroids = np.load(tensor_storage_path / f"{module_name[0]}.{module_name[1]}.{module_name[2]}.qkv_centroids.npy")
+                # if "q_linear" in module_name or "k_linear" in module_name:
+                #     print(f"{module_name[0]}.{module_name[1]}.{module_name[2]}.qkv_centroids.npy")
+                #     # exit()
+                #     pq_centroids = np.load(tensor_storage_path / f"{module_name[0]}.{module_name[1]}.{module_name[2]}.qkv_centroids.npy")
                     # hand load......                              blocks.0.attn.qkv_centroids
 
                 # pq_centroids = np.load(tensor_storage_path / f"{len(calibrate_dataset)}_{module_name}_centroids.npy")
-                centroids[linear] = torch.tensor(pq_centroids) # also for one run ################
+                # centroids[linear] = torch.tensor(pq_centroids) # also for one run ################
                 ####
                 ### Here save centroids
                 # np.save(tensor_storage_path / f"{len(calibrate_dataset)}_{module_name}_centroids.npy", pq_centroids)
-                # del input_tensors
+                
+                del input_tensors
                 # del pq_centroids
-                # gc.collect()
+                gc.collect()
                 ###
-            # exit()
+            exit()
             
         _sync_centroids(collected_modules, centroids)
 

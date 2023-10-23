@@ -79,7 +79,7 @@ class AMMLinear(nn.Module):
         x = x.permute(1, 0, 2)
         # x = rearrange(x, 'b c v -> c b v')
         
-        dist = torch.cdist(x, self.centroids) # (c, b, v)å(c, k, v)->(c, b, k)
+        dist = torch.cdist(x, self.centroids, p=1) # (c, b, v)å(c, k, v)->(c, b, k), L1-norm........
         # similarity = torch.bmm(x, self.centroids.transpose(1, 2)) # angle-based (c, b, k)
         
         
@@ -107,6 +107,80 @@ class AMMLinear(nn.Module):
 
         return self._forward(x, quantized_lut)
 
+class LUT_Linear(nn.Module):
+    def __init__(
+        self,
+        ncodebooks,
+        in_features,
+        out_features,
+        bias,
+        k=16
+    ):
+        super().__init__()
+        self.ncodebooks = ncodebooks
+        self.in_features = in_features
+        self.out_features = out_features
+        assert self.in_features % self.ncodebooks == 0
+        self.subvec_len = self.in_features // self.ncodebooks
+        self.k = k
+
+        self.register_parameter(
+            "centroids",
+            nn.Parameter(torch.randn(self.ncodebooks, self.k, self.subvec_len)) # (C, K, V)
+        )
+        self.register_parameter(
+            "luts",
+            nn.Parameter(torch.randn(self.ncodebooks, self.k, self.out_features)) # (C, K, M)
+        )
+        if bias:
+            self.register_parameter(
+                "bias",
+                nn.Parameter(torch.randn(self.out_features))
+            )
+        else:
+            self.register_parameter('bias', None)
+
+    def extra_repr(self) -> str:
+        return 'in_features={}, out_features={}, bias={}'.format(
+            self.in_features, self.out_features, self.bias is not None
+        )
+    
+    # def _forward(self, x, quantized_lut):
+    #     shape = x.shape[:-1]
+    #     x = rearrange(x, 'b n (c v) -> (b n) c v', c=self.ncodebooks, v=self.subvec_len)
+    #     x = x.permute(1, 0, 2)
+    #     dist = torch.cdist(x, self.centroids) # (c, b, v)å(c, k, v)->(c, b, k)
+    #     indices = dist.argmin(dim=-1)
+    #     # 創建一個用於索引 C 維度的張量
+    #     c_dim = torch.arange(self.ncodebooks).view(self.ncodebooks, 1).expand(self.ncodebooks, x.shape[1])
+    #     output = quantized_lut[c_dim, indices].sum(0)
+    #     # (b, out_features)
+    #     if self.bias is not None:
+    #         output = output + self.bias
+    #     return output.reshape(*shape, self.out_features)
+        # return output.reshape(batch_size, self.out_features)
+
+    def forward(self, x):
+        # with torch.no_grad():
+        #     fused_lut = torch.bmm(self.centroids, self.weight) # fused_lut is the same as
+        #     quantized_lut = AMMConv2d._quantize_lut(fused_lut)
+
+        # return self._forward(x, quantized_lut)
+        shape = x.shape[:-1]
+        # x = rearrange(x, 'b n (c v) -> (b n) c v', c=self.ncodebooks, v=self.subvec_len)
+        x = x.reshape(shape[0]*shape[1], self.ncodebooks, self.subvec_len)
+        x = x.permute(1, 0, 2)
+        dist = torch.cdist(x, self.centroids) # (c, b, v)å(c, k, v)->(c, b, k)
+        indices = dist.argmin(dim=-1)
+        # 創建一個用於索引 C 維度的張量
+        c_dim = torch.arange(self.ncodebooks).view(self.ncodebooks, 1).expand(self.ncodebooks, x.shape[1])
+        output = self.luts[c_dim, indices].sum(0)
+        # (b, out_features)
+        if self.bias is not None:
+            output = output + self.bias
+        # return output.reshape(*shape, self.out_features)
+        return output.reshape(shape[0], shape[1], self.out_features)
+    
 class TrivenLinear(nn.Module):
     def __init__(
         self,

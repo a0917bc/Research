@@ -148,9 +148,9 @@ if __name__ == "__main__":
         args.numWorkers,
         float_model
         )
-    from pathlib import Path   
+    from pathlib import Path
     save_path = Path('/home/u1887834/Research/base_model_qk')
-    old_model_path = Path("/home/u1887834/Research/old_base_model")
+    old_model_path = Path("/home/u1887834/Research/base_model_old")
     # model = torch.load(save_path / "deit3_base_0_12.pt")
     model = create_target(9, 12, "deit3_small_patch16_224.fb_in1k") # student model ft ImageNet1k 
     # torch.nn.Module.load_state_dict
@@ -160,7 +160,7 @@ if __name__ == "__main__":
     # exit()
     pl_model = LUT_DeiT(
         model=model,
-        kmeans_init=True,
+        kmeans_init=False,
         start_replaced_layer_idx = args.layer, 
         end_replaced_layer_idx=args.stop, 
         lr=args.lr,
@@ -173,19 +173,19 @@ if __name__ == "__main__":
         adam_epsilon=args.opt_eps
         )#.load_from_checkpoint(args.resume)  
     wandb_logger = WandbLogger(project="BeyondLUTNN")
-    wandb_logger.watch(model, log_freq=100)
+    # wandb_logger.watch(model, log_freq=100)
     trainer = L.Trainer(
         logger=wandb_logger,
         max_epochs=args.epoch,
         precision='16-mixed',
         devices=args.devices,
-        accumulate_grad_batches=2,
+        accumulate_grad_batches=1,
         # log_every_n_steps=10,
         # profiler="simple", # Once the .fit() function has completed, you’ll see an output.
         callbacks = [
             EMA(decay=0.999),
             # StochasticWeightAveraging(swa_lrs=1e-2),
-            EarlyStopping(monitor="val_acc", mode="max", patience=5), 
+            # EarlyStopping(monitor="val_acc", mode="max", patience=5), 
             ModelCheckpoint(monitor='val_loss', save_top_k=1),
             LearningRateMonitor(logging_interval="epoch")
             ],

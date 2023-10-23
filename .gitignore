@@ -12,3 +12,6 @@
 /notebook/*.pth
 /wandb
 /BeyondLUTNN
+networks/__pycache__/*
+operations/__pycache__/*
+transforms/__pycache__/*

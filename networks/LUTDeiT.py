@@ -4,6 +4,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.jit import Final
 import numpy as np
+import torchsnooper
 
 from timm.loss import LabelSmoothingCrossEntropy
 from timm.data import Mixup
@@ -30,6 +31,10 @@ def create_target(start_replaced_layer_idx, end_replaced_layer_idx, model_name, 
         # "attn.k_linear": 384 // subvec_len, 
         "mlp.fc1": 384 // subvec_len
         # "mlp.fc2": 1536 // subvec_len
+        
+        # "linear_tokens": 196 // 14, 
+        # "mlp_channels.fc1": 384 // subvec_len,
+        # "mlp_channels.fc2":1536 // subvec_len
     }
     
     for i in range(start_replaced_layer_idx, end_replaced_layer_idx): 
@@ -200,10 +205,12 @@ class LUT_DeiT(L.LightningModule):
     
     def lr_scheduler_step(self, scheduler, metric):
         scheduler.step(epoch=self.current_epoch)  # timm's scheduler need the epoch value
-        
 
+
+# +
 class Argmax_DeiT(L.LightningModule):
     def __init__(self, 
+                 model = None,
                  kmeans_init=False, 
                  start_replaced_layer_idx=0, 
                  end_replaced_layer_idx=12, 
@@ -219,27 +226,42 @@ class Argmax_DeiT(L.LightningModule):
                  weight_decay=0.1
                  ):
         super().__init__()
-        self.save_hyperparameters()
-        # self.model = torch.load(f"/home/u1887834/Research/notebook/argmax_{model_name}.pth") # deit3_small_patch16_224.fb_in22k_ft_in1k
+        self.save_hyperparameters(ignore=['model'])
+        if model is not None:
+            self.model = model
+            # torch.load(f"/home/u1887834/Research/notebook/{model_name}.pth") # deit3_small_patch16_224.fb_in22k_ft_in1k
                                # "/home/u1887834/Research/notebook/argmax_deit3_small_patch16_224.fb_in22k_ft_in1k.pth"
         # self.model = torch.load(f"/home/u1887834/Research/{model_name}.pth")
-        self.model = VisionTransformer(weight_init="skip", embed_dim=384, num_heads=6, class_token=True)
-        # print(model_name)
-        # exit()
-        self.model.load_state_dict(torch.load(f"/home/u1887834/Research/{model_name}.pth"))
-        print(self.model)
+        # self.model = VisionTransformer(weight_init="skip", embed_dim=384, num_heads=6, class_token=True)
+        
+        
+        # self.model.load_state_dict(torch.load(f"/home/u1887834/Research/{model_name}.pth"))
+        # print(self.model)
+        float_model = create_model(model_name, pretrained=True)
+        float_model.eval()
+        for param in float_model.parameters():
+            param.requires_grad = False
+        float_model = torch.compile(float_model)
+        self.float_model = float_model
         # self.model = create_model(f"{model_name}", pretrained=True)
-        # self.model = create_model(f"{model_name}", pretrained=True)
+        
         if kmeans_init:
             from pathlib import Path   
             save_path = Path('/home/u1887834/Research/old_base_model') # TODO .... 
             # new_model_state_dict = torch.load(save_path / f"{num}_base_{start_replaced_layer_idx}_{end_replaced_layer_idx}.pt")
             self.model.load_state_dict(torch.load(save_path / f"{num}_base_{start_replaced_layer_idx}_{end_replaced_layer_idx}.pt"))
-        for param in self.model.parameters():
-            param.requires_grad = False
-        for l in range(start_replaced_layer_idx, end_replaced_layer_idx):
-            for param in self.model.blocks[l].parameters():
-                param.requires_grad = True
+#         for param in self.model.parameters():
+#             param.requires_grad = False
+            
+#         self.model.head.weight.requires_grad = True
+#         self.model.head.bias.requires_grad = True
+        for name, param in self.model.named_parameters():
+            if param.requires_grad:
+                print(f"Parameter: {name}, Requires Gradient: {param.requires_grad}")
+                
+        # for l in range(start_replaced_layer_idx, end_replaced_layer_idx):
+        #     for param in self.model.blocks[l].parameters():
+        #         param.requires_grad = True
         
         # loss
         self.criterion = LabelSmoothingCrossEntropy(smoothing=smoothing)
@@ -269,9 +291,8 @@ class Argmax_DeiT(L.LightningModule):
         self.log(f"{stage}_acc", acc, on_epoch=True, sync_dist=True)
         return loss
     def training_step(self, batch, batch_idx):
-        # x, y = batch
-        # loss = self.common_step_v2(x, y, "train")
-        loss = None
+        x, y = batch
+        loss = self.common_step_v2(x, y, "train")
         return loss
     
     def validation_step(self, batch, batch_idx):
@@ -281,40 +302,43 @@ class Argmax_DeiT(L.LightningModule):
     def configure_optimizers(self):
         """Prepare optimizer and schedule (linear warmup and decay)"""
         # Initialize lists to hold parameters for each group
-        # default_params = []
-        # special_linear_params = []
-        # no_decay_params = []
+        default_params = []
+        special_linear_params = []
+        no_decay_params = []
 
-        # # Define the names or substrings that should not have weight decay
-        # no_decay = ["bias", "LayerNorm.weight"]
+        # Define the names or substrings that should not have weight decay
+        no_decay = ["bias", "LayerNorm.weight"]
 
-        # # Iterate through all named parameters
-        # for name, param in self.model.named_parameters():
-        #     if any(nd in name for nd in no_decay):
-        #         # Parameters that should not have weight decay
-        #         no_decay_params.append(param)
-        #     elif 'inverse_temperature_logit' in name:  # Replace with the actual name or substring
-        #         # Parameters in nn.Linear that should have a special learning rate
-        #         special_linear_params.append(param)
-        #     else:
-        #         # All other parameters
-        #         default_params.append(param)
+        # Iterate through all named parameters
+        for name, param in self.model.named_parameters():
+            if any(nd in name for nd in no_decay):
+                # Parameters that should not have weight decay
+                no_decay_params.append(param)
+            elif 'inverse_temperature_logit' in name:  # Replace with the actual name or substring
+                # Parameters in nn.Linear that should have a special learning rate
+                special_linear_params.append(param)
+            else:
+                # All other parameters
+                default_params.append(param)
 
-        # # Create the list of parameter groups
-        # optimizer_grouped_parameters = [
-        #     {'params': default_params, 'weight_decay': self.hparams.weight_decay},  # Default learning rate and weight decay
-        #     {'params': no_decay_params, 'weight_decay': 0.0},  # No weight decay
-        #     {'params': special_linear_params, 'lr': 0.1}  # Special learning rate for specific nn.Linear parameters
-        # ]
-        # optimizer = torch.optim.AdamW(optimizer_grouped_parameters, lr=self.hparams.lr, eps=self.hparams.adam_epsilon)
-        optimizer = torch.optim.AdamW(self.model.parameters(), lr=self.hparams.lr, eps=self.hparams.adam_epsilon)
+        # Create the list of parameter groups
+        optimizer_grouped_parameters = [
+            {'params': default_params, 'weight_decay': self.hparams.weight_decay},  # Default learning rate and weight decay
+            {'params': no_decay_params, 'weight_decay': 0.0},  # No weight decay
+            {'params': special_linear_params, 'lr': 0.1}  # Special learning rate for specific nn.Linear parameters
+        ]
+        optimizer = torch.optim.AdamW(optimizer_grouped_parameters, lr=self.hparams.lr, eps=self.hparams.adam_epsilon)
+        # optimizer = torch.optim.AdamW(self.model.parameters(), lr=self.hparams.lr, eps=self.hparams.adam_epsilon)
 
         scheduler = CosineLRScheduler(optimizer, cycle_limit=1, t_initial = self.hparams.max_iters)
         return [optimizer], [{"scheduler": scheduler, "interval": "epoch"}]
     
     def lr_scheduler_step(self, scheduler, metric):
         scheduler.step(epoch=self.current_epoch)  # timm's scheduler need the epoch value
-        
+
+
+# -
+
 class LUT_Distilled_DeiT(L.LightningModule):
     def __init__(self, 
                  kmeans_init=True, 
@@ -448,7 +472,7 @@ class LUT_Distilled_DeiT(L.LightningModule):
     
     def lr_scheduler_step(self, scheduler, metric):
         scheduler.step(epoch=self.current_epoch)  # timm's scheduler need the epoch value
-        
+
 class Attention2(nn.Module):
     fused_attn: Final[bool]
 
@@ -541,13 +565,17 @@ class Attention3(nn.Module):
         self.fused_attn = use_fused_attn()
         self.attn_score = AttnScore(scale=self.scale, attn_drop=attn_drop)
         self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
+        self.register_parameter(
+            "inverse_temperature_logit",
+            nn.Parameter(torch.randn(1))
+        )
         
         self.q_norm = norm_layer(self.head_dim) if qk_norm else nn.Identity()
         self.k_norm = norm_layer(self.head_dim) if qk_norm else nn.Identity()
         self.attn_drop = nn.Dropout(attn_drop)
         self.proj = nn.Linear(dim, dim)
         self.proj_drop = nn.Dropout(proj_drop)
-
+    # @torchsnooper.snoop()
     def forward(self, x):
         B, N, C = x.shape
         qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, self.head_dim).permute(2, 0, 3, 1, 4)
@@ -560,15 +588,27 @@ class Attention3(nn.Module):
         #         dropout_p=self.attn_drop.p,
         #     )
         # else:
-        #     q = q * self.scale
-        #     attn = q @ k.transpose(-2, -1)
-        #     # attn = attn.softmax(dim=-1)
-        #     attn_argmax = attn.argmax(dim=-1)
-        #     attn = self.attn_drop(attn)
-        #     # output = attn - (attn - attn_argmax).detach() # output = real_output - (real_output - quantized_output).detach()
-        #     x = attn_argmax @ v
-        attn = self.attn_score(q, k)
-        x = attn @ v
+            # q = q * self.scale
+            # attn = q @ k.transpose(-2, -1)
+            # attn = attn.softmax(dim=-1)
+            # attn_argmax = attn.argmax(dim=-1)
+            # attn = self.attn_drop(attn)
+            # output = attn - (attn - attn_argmax).detach() 
+            # x = attn_argmax @ v
+        # attn = self.attn_score(q, k)
+        
+        q = q * self.scale
+        attn = q @ k.transpose(-2, -1)
+        # attn = attn.softmax(dim=-1)
+        attn = F.softmax(attn * (F.softplus(self.inverse_temperature_logit) + 1), dim=-1) # TODO
+        # attn = F.softmax(attn * ), dim=-1) # TODO How to implement annealing?
+        # attn = F.softmax(attn, dim=-1)
+        attn_argmax = F.one_hot(attn.argmax(dim=-1), num_classes=N).float()
+        attn = self.attn_drop(attn)
+        output = attn - (attn - attn_argmax).detach()
+        # x = attn @ v
+        x = output @ v
+        
         x = x.transpose(1, 2).reshape(B, N, C)
         x = self.proj(x)
         x = self.proj_drop(x)
