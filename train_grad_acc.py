@@ -22,6 +22,23 @@ def get_args_parser():
     # Trainer arguments
     parser.add_argument("--devices", type=int, default=4)
     
+    # My settings
+    parser.add_argument('--model_name', type=str, default='deit3_small_patch16_224.fb_in22k_ft_in1k')
+    
+    parser.add_argument("--numWorkers", type=int, default=8)
+    parser.add_argument("--epoch", type=int, default=100)
+    parser.add_argument("--layer", type=int, default=9, 
+                    help="Specify the number of layer to be product-quantized. "
+                    )
+    parser.add_argument("--stop", type=int, default=12, 
+                    help="Specify stopping layer. "
+                    )
+    parser.add_argument("--num", type=int, default=120000, 
+                    help="Specify the number of dataset to initialize base LUT model. "
+                    )
+    parser.add_argument('--resume', type=str, default='rand-m9-mstd0.5-inc1')
+    parser.add_argument('--ckpt', type=str, default=None)
+    
     # Knowledge distillation
     parser.add_argument('--kd', type=str, default="soft", 
                         help='kd type (default: soft)') 
@@ -83,22 +100,6 @@ def get_args_parser():
     parser.add_argument('--mixup-mode', type=str, default='batch',
                         help='How to apply mixup/cutmix params. Per "batch", "pair", or "elem"')
     
-    # Others
-    parser.add_argument('--model_name', type=str, default='deit3_small_patch16_224.fb_in22k_ft_in1k')
-    
-    parser.add_argument("--numWorkers", type=int, default=8)
-    parser.add_argument("--epoch", type=int, default=100)
-    parser.add_argument("--layer", type=int, default=5, 
-                    help="Specify the number of layer to be product-quantized. "
-                    )
-    parser.add_argument("--stop", type=int, default=12, 
-                    help="Specify stopping layer. "
-                    )
-    parser.add_argument("--num", type=int, default=120000, 
-                    help="Specify the number of dataset to initialize base LUT model. "
-                    )
-    parser.add_argument('--resume', type=str, default='rand-m9-mstd0.5-inc1')
-    parser.add_argument('--ckpt', type=str, default=None)
     return parser.parse_args()
 
 def load_data(batchSize, 
@@ -152,14 +153,14 @@ if __name__ == "__main__":
     save_path = Path('/home/u1887834/Research/base_model_qk')
     old_model_path = Path("/home/u1887834/Research/base_model_old")
     # model = torch.load(save_path / "deit3_base_0_12.pt")
-    model = create_target(9, 12, "deit3_small_patch16_224.fb_in1k") # student model ft ImageNet1k 
+    # model = create_target(9, 12, "deit3_small_patch16_224.fb_in1k") # student model ft ImageNet1k 
     # torch.nn.Module.load_state_dict
-    model.load_state_dict(torch.load(old_model_path / "120000_base_9_12.pt"))
+    # model.load_state_dict(torch.load(old_model_path / "120000_base_9_12.pt"))
     # model = torch.load(old_model_path / "120000_base_9_12.pt")
     # print(model)
     # exit()
     pl_model = LUT_DeiT(
-        model=model,
+        # model=model,
         kmeans_init=False,
         start_replaced_layer_idx = args.layer, 
         end_replaced_layer_idx=args.stop, 
@@ -171,15 +172,20 @@ if __name__ == "__main__":
         model_name = args.model_name,
         weight_decay=args.weight_decay,
         adam_epsilon=args.opt_eps
-        )#.load_from_checkpoint(args.resume)  
-    wandb_logger = WandbLogger(project="BeyondLUTNN")
+        ).load_from_checkpoint(args.resume) 
+    
+    
+    
+    
+     
+    wandb_logger = WandbLogger(project="1106")
     # wandb_logger.watch(model, log_freq=100)
     trainer = L.Trainer(
         logger=wandb_logger,
         max_epochs=args.epoch,
         precision='16-mixed',
         devices=args.devices,
-        accumulate_grad_batches=1,
+        accumulate_grad_batches=4,
         # log_every_n_steps=10,
         # profiler="simple", # Once the .fit() function has completed, you’ll see an output.
         callbacks = [
@@ -193,6 +199,9 @@ if __name__ == "__main__":
         enable_progress_bar=True,
         enable_model_summary=True
     )
+    trainer.validate(pl_model, val_loader)
+    exit()
+    
     if args.ckpt is not None:
         trainer.fit(model=pl_model,  
                     train_dataloaders=train_loader,

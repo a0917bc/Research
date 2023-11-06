@@ -14,13 +14,13 @@ from timm.data import Mixup, resolve_model_data_config, create_transform
 import torch.nn as nn
 import torch.nn.functional as F
 # Custom imports
-from networks.LUTDeiT import LUT_DeiT, Attention2
+from networks.LUTDeiT import LUT_DeiT, Attention2, create_target
 from networks.wrapper import LightningWrapper 
 
 def get_args_parser():
     parser = ArgumentParser()
     # Trainer arguments
-    parser.add_argument("--devices", type=int, default=4)
+    parser.add_argument("--devices", type=int, default=1)
     
     # Knowledge distillation
     parser.add_argument('--kd', type=str, default="hard", 
@@ -97,6 +97,7 @@ def get_args_parser():
     parser.add_argument("--num", type=int, default=120000, 
                     help="Specify the number of dataset to initialize base LUT model. "
                     )
+    parser.add_argument('--ckpt', type=str, default=None)
     return parser.parse_args()
 
 def load_data(batchSize, 
@@ -128,18 +129,16 @@ def load_data(batchSize,
     val_loader = DataLoader(
         Subset(val_dataset, range(100)), batch_size=batch_size, shuffle=False,
         num_workers=num_workers, pin_memory=True, sampler=None)
+    # val_loader = DataLoader(
+    #     val_dataset, batch_size=batch_size, shuffle=False,
+    #     num_workers=num_workers, pin_memory=True, sampler=None)
     return train_loader, val_loader
 
 if __name__ == "__main__":
     L.seed_everything(7)
     args = get_args_parser()
     mixup_active = args.mixup > 0 or args.cutmix > 0. or args.cutmix_minmax is not None
-    if mixup_active:
-        mixup_fn = Mixup(
-            mixup_alpha=args.mixup, cutmix_alpha=args.cutmix, cutmix_minmax=args.cutmix_minmax,
-            prob=args.mixup_prob, switch_prob=args.mixup_switch_prob, mode=args.mixup_mode,
-            label_smoothing=args.smoothing, num_classes=1000)
-        
+    
     # compiled_model = LUT_DeiT(kmeans_init=True, # already train on LUT_DeiT?
     #                           start_replaced_layer_idx = args.layer, 
     #                           end_replaced_layer_idx=args.stop, 
@@ -166,14 +165,45 @@ if __name__ == "__main__":
     model_name = 'deit3_small_patch16_224.fb_in22k_ft_in1k'
     # model = create_model(model_name, pretrained=True)
     
-    print(model_name)
+    # print(model_name)
     # model = create_model(model_name, pretrained=True)
-    model = torch.load(f"/home/u1887834/Research/notebook/{model_name}.pth") # deit3_small_patch16_384.fb_in22k_ft_in1k.pth
-    model.eval() # float_model.eval()
-    print(model)
-    model = LightningWrapper(model)
+    # model = torch.load(f"/home/u1887834/Research/notebook/{model_name}.pth") # deit3_small_patch16_384.fb_in22k_ft_in1k.pth
+    # model = create_model(model_name=model_name, pretrained=True)
+    # model = create_target(9, 12, "deit3_small_patch16_224.fb_in1k") # student model ft ImageNet1k 
+    if args.ckpt is not None:
+        pl_model = LUT_DeiT(
+            # model=model,
+            start_replaced_layer_idx=9, 
+            end_replaced_layer_idx=12, 
+            lr=args.lr,
+            max_iters=args.epoch,
+            distillation_type=args.kd,
+            alpha=args.alpha,
+            tau=args.tau,
+            model_name = args.model_name,
+            weight_decay=args.weight_decay,
+            adam_epsilon=args.opt_eps
+            ).load_from_checkpoint(args.ckpt)  
+    else:
+        pl_model = LUT_DeiT(
+            # model=model,
+            start_replaced_layer_idx=9, 
+            end_replaced_layer_idx=12, 
+            lr=args.lr,
+            max_iters=args.epoch,
+            distillation_type=args.kd,
+            alpha=args.alpha,
+            tau=args.tau,
+            model_name = args.model_name,
+            weight_decay=args.weight_decay,
+            adam_epsilon=args.opt_eps
+            )
+    pl_model.eval() # float_model.eval()
+    # print(pl_model)
+    # exit()
+    # model = LightningWrapper(model)
     train_loader, val_loader = load_data(args.batchSize,
                                          args.numWorkers,
                                          model_name
                                          )
-    trainer.validate(model, val_loader)
+    trainer.validate(pl_model, val_loader)

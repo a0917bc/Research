@@ -65,11 +65,11 @@ class LUT_DeiT(L.LightningModule):
     def __init__(self, 
                  model = None,
                  kmeans_init=False, 
-                 start_replaced_layer_idx=0, 
+                 start_replaced_layer_idx=9, 
                  end_replaced_layer_idx=12, 
                  num=1024,
                  model_name="deit3_small_patch16_224.fb_in22k_ft_in1k",
-                 distillation_type="soft",
+                 distillation_type="hard",
                  tau=1/2,
                  alpha=1/2,
                  max_iters = 100,
@@ -86,17 +86,19 @@ class LUT_DeiT(L.LightningModule):
         self.float_model = torch.compile(float_model)
         
         self.save_hyperparameters(ignore=['model'])
-        # self.model = create_target(start_replaced_layer_idx, end_replaced_layer_idx, model_name=model_name)
+        self.model = create_target(9, 12, model_name=model_name)
+        # print(self.model)
+        # exit()
         # if kmeans_init:
         #     from pathlib import Path   
         #     save_path = Path('/home/u1887834/Research/old_base_model') # TODO .... 
         #     # self.model.load_state_dict(torch.load(save_path / f"{num}_base_{start_replaced_layer_idx}_{end_replaced_layer_idx}.pt"))
         #     self.model.load_state_dict(torch.load(f"/home/u1887834/Research/base_model_qk/{model_name}_120000_base_0_12.pt"))
         #                                            #/home/u1887834/Research/base_model_qk/deit3_small_patch16_224.fb_in22k_ft_in1k_120000_base_0_12.pt
-        from pathlib import Path   
-        save_path = Path('/home/u1887834/Research/base_model_qk')
-        if model is not None:
-            self.model = model
+        # from pathlib import Path   
+        # save_path = Path('/home/u1887834/Research/base_model_qk')
+        # if model is not None:
+        #     self.model = model
             
         # for l in range(12):
         #     for name, param in self.model.blocks[l].named_parameters():
@@ -364,6 +366,10 @@ class LUT_Distilled_DeiT(L.LightningModule):
         float_model = torch.compile(float_model)
         self.float_model = float_model
         self.save_hyperparameters()
+        
+        
+        
+        
         self.model = create_target(start_replaced_layer_idx, end_replaced_layer_idx, model_name=model_name)
         for param in self.model.parameters():
             param.requires_grad = False
