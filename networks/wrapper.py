@@ -30,18 +30,6 @@ class LightningWrapper(L.LightningModule):
         x, y = batch
         loss = self.common_step(x, y, "train")
         return loss
-            # outputs = model(samples)
-            # if not args.cosub:
-            #     loss = criterion(samples, outputs, targets)
-            # else:
-            #     outputs = torch.split(outputs, outputs.shape[0]//2, dim=0)
-            #     loss = 0.25 * criterion(outputs[0], targets) 
-            #     loss = loss + 0.25 * criterion(outputs[1], targets) 
-            #     loss = loss + 0.25 * criterion(outputs[0], outputs[1].detach().sigmoid())
-            #     loss = loss + 0.25 * criterion(outputs[1], outputs[0].detach().sigmoid())
-        # if not math.isfinite(loss_value):
-        #     print("Loss is {}, stopping training".format(loss_value))
-        #     sys.exit(1)
     def validation_step(self, batch, batch_idx):
         x, y = batch
         loss = self.common_step(x, y, "val")

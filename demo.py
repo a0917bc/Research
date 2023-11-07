@@ -4,35 +4,52 @@ import os
 
 # Third-party imports
 import torch
-from torch.utils.data import DataLoader, Subset
+from torch.utils.data import DataLoader
 import torchvision.datasets as datasets
 import torchvision.transforms as transforms
 import lightning as L
-from lightning.pytorch.callbacks import StochasticWeightAveraging
+from lightning.pytorch.callbacks import StochasticWeightAveraging, EarlyStopping, LearningRateMonitor, ModelCheckpoint
+from lightning.pytorch.loggers import WandbLogger
+
 from timm import create_model
 from timm.data import Mixup, resolve_model_data_config, create_transform
-import torch.nn as nn
-import torch.nn.functional as F
 # Custom imports
-from networks.LUTDeiT import LUT_DeiT, Attention2, create_target
-from networks.wrapper import LightningWrapper 
+from networks.LUTDeiT import LUT_DeiT, LUT_Distilled_DeiT, Attention2, create_target
+from ema import EMA
 
 def get_args_parser():
     parser = ArgumentParser()
     # Trainer arguments
     parser.add_argument("--devices", type=int, default=2)
     
+    # My settings
+    parser.add_argument('--model_name', type=str, default='deit3_small_patch16_224.fb_in22k_ft_in1k')
+    
+    parser.add_argument("--numWorkers", type=int, default=8)
+    parser.add_argument("--epoch", type=int, default=100)
+    parser.add_argument("--layer", type=int, default=9, 
+                    help="Specify the number of layer to be product-quantized. "
+                    )
+    parser.add_argument("--stop", type=int, default=12, 
+                    help="Specify stopping layer. "
+                    )
+    parser.add_argument("--num", type=int, default=120000, 
+                    help="Specify the number of dataset to initialize base LUT model. "
+                    )
+    parser.add_argument('--resume', type=str, default='/home/yllab/JiaXing/Research/home/u1887834/Research/BeyondLUTNN/yefgcf9q/checkpoints/epoch=49-step=41750.ckpt')
+    parser.add_argument('--ckpt', type=str, default=None)
+    
     # Knowledge distillation
-    parser.add_argument('--kd', type=str, default="hard", 
-                        help='kd type (default: hard)') 
+    parser.add_argument('--kd', type=str, default="soft", 
+                        help='kd type (default: soft)') 
     parser.add_argument('--alpha', default=0.8, type=float) # 0.8*teacher_loss
     parser.add_argument('--tau', type=float, default=1, 
                         help='kd type (default: hard)') 
     
     # Optimizer parameters
-    parser.add_argument('--lr', type=float, default=5e-4, metavar='LR',
+    parser.add_argument('--lr', type=float, default=5e-5, metavar='LR',
                         help='learning rate (default: 5e-4)')
-    parser.add_argument("--batchSize", type=int, default=192)
+    parser.add_argument("--batchSize", type=int, default=16) # change to 128
     
     parser.add_argument('--opt', default='adamw', type=str, metavar='OPTIMIZER',
                         help='Optimizer (default: "adamw"')
@@ -83,130 +100,72 @@ def get_args_parser():
     parser.add_argument('--mixup-mode', type=str, default='batch',
                         help='How to apply mixup/cutmix params. Per "batch", "pair", or "elem"')
     
-    # Others
-    parser.add_argument('--model_name', type=str, default='deit3_small_patch16_224.fb_in1k')
-    
-    parser.add_argument("--numWorkers", type=int, default=4)
-    parser.add_argument("--epoch", type=int, default=100)
-    parser.add_argument("--layer", type=int, default=5, 
-                    help="Specify the number of layer to be product-quantized. "
-                    )
-    parser.add_argument("--stop", type=int, default=12, 
-                    help="Specify stopping layer. "
-                    )
-    parser.add_argument("--num", type=int, default=120000, 
-                    help="Specify the number of dataset to initialize base LUT model. "
-                    )
-    parser.add_argument('--ckpt', type=str, default=None)
     return parser.parse_args()
 
 def load_data(batchSize, 
               num_workers,
-              model_name
+              float_model
               ):
     batch_size = batchSize
-    traindir = os.path.join("/work/u1887834/imagenet/", 'train')
+    # traindir = os.path.join("/work/u1887834/imagenet/", 'train')
     valdir = os.path.join("/dataset/imagenet/", 'val')
-    float_model = create_model(model_name, pretrained=False)
+
     data_config = resolve_model_data_config(float_model)
     val_transform = create_transform(**data_config, is_training=False)
     train_transform = create_transform(**data_config, is_training=True)
-
-    # train_dataset = datasets.ImageFolder(
-    #     traindir,
-    #     train_transform
-    #     )
+    train_dataset = datasets.ImageFolder(
+        valdir,
+        train_transform
+        )
 
     val_dataset = datasets.ImageFolder(
         valdir,
         val_transform
         )
    
-    # train_loader = DataLoader(
-    #     train_dataset, batch_size=batch_size, shuffle=True,
-    #     num_workers=num_workers, pin_memory=True, sampler=None)
-    train_loader = None
-
-    # val_loader = DataLoader(
-    #     Subset(val_dataset, range(100)), batch_size=batch_size, shuffle=False,
-    #     num_workers=num_workers, pin_memory=True, sampler=None)
+    train_loader = DataLoader(
+        train_dataset, batch_size=batch_size, shuffle=True,
+        num_workers=num_workers, pin_memory=True, sampler=None)
+    # train_loader = None
     val_loader = DataLoader(
         val_dataset, batch_size=batch_size, shuffle=False,
         num_workers=num_workers, pin_memory=True, sampler=None)
-    return train_loader, val_loader
+    return val_loader, val_loader
 
 if __name__ == "__main__":
     L.seed_everything(7)
     args = get_args_parser()
-    mixup_active = args.mixup > 0 or args.cutmix > 0. or args.cutmix_minmax is not None
+   
+    args.numWorkers = args.devices * 4
+    float_model = create_model(args.model_name, pretrained=True)
+    train_loader, val_loader = load_data(
+        args.batchSize, 
+        args.numWorkers,
+        float_model
+        )
     
-    # compiled_model = LUT_DeiT(kmeans_init=True, # already train on LUT_DeiT?
-    #                           start_replaced_layer_idx = args.layer, 
-    #                           end_replaced_layer_idx=args.stop, 
-    #                           lr=args.lr,
-    #                           num=args.num,
-    #                           distillation_type=args.kd,
-    #                           alpha=args.alpha,
-    #                           tau=args.tau,
-    #                           model_name = args.model_name,
-    #                           weight_decay=args.weight_decay,
-    #                           adam_epsilon=args.opt_eps
-    #                           )
+    pl_model = LUT_DeiT().load_from_checkpoint(args.resume) 
+    # print(pl_model)
     
     trainer = L.Trainer(
         max_epochs=args.epoch,
         # precision='16-mixed',
-        devices=args.devices,
+        # devices=args.devices,
+        accelerator="cpu",
+        accumulate_grad_batches=4,
         log_every_n_steps=10,
-        # callbacks=[StochasticWeightAveraging(swa_lrs=1e-2)],
+        # profiler="simple", # Once the .fit() function has completed, you’ll see an output.
+        callbacks = [
+            EMA(decay=0.999),
+            # StochasticWeightAveraging(swa_lrs=1e-2),
+            # EarlyStopping(monitor="val_acc", mode="max", patience=5), 
+            ModelCheckpoint(monitor='val_loss', save_top_k=1),
+            LearningRateMonitor(logging_interval="epoch")
+            ],
+        strategy='ddp_find_unused_parameters_true',
         enable_progress_bar=True,
         enable_model_summary=True
     )
     
-    model_name = 'deit3_small_patch16_224.fb_in22k_ft_in1k'
-
-    # print(model_name)
-    # model = create_model(model_name, pretrained=True)
-    # model = torch.load(f"/home/u1887834/Research/notebook/{model_name}.pth") # deit3_small_patch16_384.fb_in22k_ft_in1k.pth
-    model = create_model(model_name=model_name, pretrained=True)
-    model.eval()
-    # model = create_target(9, 12, "deit3_small_patch16_224.fb_in1k") # student model ft ImageNet1k 
+    trainer.validate(pl_model, val_loader)
     
-    # if args.ckpt is not None:
-    #     pl_model = LUT_DeiT(
-    #         # model=model,
-    #         start_replaced_layer_idx=9, 
-    #         end_replaced_layer_idx=12, 
-    #         lr=args.lr,
-    #         max_iters=args.epoch,
-    #         distillation_type=args.kd,
-    #         alpha=args.alpha,
-    #         tau=args.tau,
-    #         model_name = args.model_name,
-    #         weight_decay=args.weight_decay,
-    #         adam_epsilon=args.opt_eps
-    #         ).load_from_checkpoint(args.ckpt)  
-    # else:
-    #     pl_model = LUT_DeiT(
-    #         # model=model,
-    #         start_replaced_layer_idx=9, 
-    #         end_replaced_layer_idx=12, 
-    #         lr=args.lr,
-    #         max_iters=args.epoch,
-    #         distillation_type=args.kd,
-    #         alpha=args.alpha,
-    #         tau=args.tau,
-    #         model_name = args.model_name,
-    #         weight_decay=args.weight_decay,
-    #         adam_epsilon=args.opt_eps
-    #         )
-    
-    # pl_model.eval() # float_model.eval()
-    # print(pl_model)
-    # exit()
-    model = LightningWrapper(model)
-    train_loader, val_loader = load_data(args.batchSize,
-                                         args.numWorkers,
-                                         model_name
-                                         )
-    trainer.validate(model, val_loader)

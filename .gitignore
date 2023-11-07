@@ -15,3 +15,6 @@
 networks/__pycache__/*
 operations/__pycache__/*
 transforms/__pycache__/*
+*.pth
+*.tar.gz
+*.ckpt

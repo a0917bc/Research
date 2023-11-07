@@ -20,7 +20,7 @@ from ema import EMA
 def get_args_parser():
     parser = ArgumentParser()
     # Trainer arguments
-    parser.add_argument("--devices", type=int, default=4)
+    parser.add_argument("--devices", type=int, default=2)
     
     # My settings
     parser.add_argument('--model_name', type=str, default='deit3_small_patch16_224.fb_in22k_ft_in1k')
@@ -36,7 +36,7 @@ def get_args_parser():
     parser.add_argument("--num", type=int, default=120000, 
                     help="Specify the number of dataset to initialize base LUT model. "
                     )
-    parser.add_argument('--resume', type=str, default='rand-m9-mstd0.5-inc1')
+    parser.add_argument('--resume', type=str, default='/home/yllab/JiaXing/Research/home/u1887834/Research/BeyondLUTNN/yefgcf9q/checkpoints/epoch=49-step=41750.ckpt')
     parser.add_argument('--ckpt', type=str, default=None)
     
     # Knowledge distillation
@@ -47,9 +47,9 @@ def get_args_parser():
                         help='kd type (default: hard)') 
     
     # Optimizer parameters
-    parser.add_argument('--lr', type=float, default=5e-4, metavar='LR',
+    parser.add_argument('--lr', type=float, default=5e-5, metavar='LR',
                         help='learning rate (default: 5e-4)')
-    parser.add_argument("--batchSize", type=int, default=192)
+    parser.add_argument("--batchSize", type=int, default=128) # change to 128
     
     parser.add_argument('--opt', default='adamw', type=str, metavar='OPTIMIZER',
                         help='Optimizer (default: "adamw"')
@@ -107,14 +107,14 @@ def load_data(batchSize,
               float_model
               ):
     batch_size = batchSize
-    traindir = os.path.join("/work/u1887834/imagenet/", 'train')
-    valdir = os.path.join("/work/u1887834/imagenet/", 'val')
+    # traindir = os.path.join("/work/u1887834/imagenet/", 'train')
+    valdir = os.path.join("/dataset/imagenet/", 'val')
 
     data_config = resolve_model_data_config(float_model)
     val_transform = create_transform(**data_config, is_training=False)
     train_transform = create_transform(**data_config, is_training=True)
     train_dataset = datasets.ImageFolder(
-        traindir,
+        valdir,
         train_transform
         )
 
@@ -126,11 +126,11 @@ def load_data(batchSize,
     train_loader = DataLoader(
         train_dataset, batch_size=batch_size, shuffle=True,
         num_workers=num_workers, pin_memory=True, sampler=None)
-
+    # train_loader = None
     val_loader = DataLoader(
         val_dataset, batch_size=batch_size, shuffle=False,
         num_workers=num_workers, pin_memory=True, sampler=None)
-    return train_loader, val_loader
+    return val_loader, val_loader
 
 if __name__ == "__main__":
     L.seed_everything(7)
@@ -186,7 +186,7 @@ if __name__ == "__main__":
         precision='16-mixed',
         devices=args.devices,
         accumulate_grad_batches=4,
-        # log_every_n_steps=10,
+        log_every_n_steps=10,
         # profiler="simple", # Once the .fit() function has completed, you’ll see an output.
         callbacks = [
             EMA(decay=0.999),
@@ -199,8 +199,6 @@ if __name__ == "__main__":
         enable_progress_bar=True,
         enable_model_summary=True
     )
-    trainer.validate(pl_model, val_loader)
-    exit()
     
     if args.ckpt is not None:
         trainer.fit(model=pl_model,  
