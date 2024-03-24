@@ -2,14 +2,17 @@
 
 ## Overview
 
-<img width="787" alt="image" src="https://github.com/a0917bc/Research/assets/22569133/970aa7c0-1bee-442b-83cd-0158cd2f14ad">
-https://github.com/huawei-noah/AdderNet
+<img width="696" alt="image" src="https://github.com/a0917bc/Research/assets/22569133/45ddd6a9-f319-438e-9e2b-97eb21fbbe8e">
 
-In recent years, there has been research on replacing multiplication operations. A graph has been gathered to compare the energy cost of multiplication and addition.
+In recent years, there has been research on replacing multiplication operations. The below graph has been gathered to compare the energy cost of multiplication and addition.
+<img src="https://github.com/a0917bc/Research/assets/22569133/970aa7c0-1bee-442b-83cd-0158cd2f14ad" alt="energy_cost_comparison_graph" width="200">
 
-As a result, approaches like AdderNet replace multiplication in convolutions with addition, while ShiftCNN represents weights as powers of two, allowing multiplication to be replaced with bit-shift operations.
+As a result, approaches like [AdderNet](https://arxiv.org/abs/1706.02393) replace multiplication in convolutions with addition, while [ShiftCNN](https://github.com/huawei-noah/AdderNet) represents weights as powers of two, allowing multiplication to be replaced with bit-shift operations.
+
 
 Furthermore, in recent research, some have replaced the Multiply-Accumulate (MAC) operations in matrix multiplication with table lookup and addition.
+
+This research is a little complicated. If you find it interesting, further details are available [here](https://drive.google.com/file/d/1MWdCc87fbf3tu652l5MjYaCSlNwwaN5k/view?usp=sharing).
 
 ## Usage
 
@@ -25,20 +28,19 @@ Short Flow:
 prototype_learning.py -> train.py -> demo.py
 
 ## Contributions
-
-• Developed a comprehensive training pipeline, particularly effective in handling ImageNet.
-• Achieved a significant accuracy improvement of up to 10% by surpassing LUT-NN at MobiCom 2023.
-
+- Developed a comprehensive training pipeline, particularly effective in handling ImageNet.
+- Achieved a significant accuracy improvement of up to 10% by surpassing LUT-NN at MobiCom 2023.
+  
 ## License
 
-Specify the license for your research code or data, so others know how they can use your project. Common options include MIT License, GNU General Public License (GNU GPL), etc.
+This project is licensed under the [MIT License](https://opensource.org/licenses/MIT) - see the [LICENSE](LICENSE) file for details.
+
 
 ## Contact
 
 Feel free to contact me(a0917bc(at)gmail(dot)com) if you have any questions.
 
 ## References
-
-<https://github.com/dblalock/bolt/tree/master>
-<https://github.com/lutnn/blink-mm>
-<https://github.com/src-d/kmcuda>
+- [https://github.com/dblalock/bolt/tree/master](https://github.com/dblalock/bolt/tree/master)
+- [https://github.com/lutnn/blink-mm](https://github.com/lutnn/blink-mm)
+- [https://github.com/src-d/kmcuda](https://github.com/src-d/kmcuda)
