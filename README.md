@@ -10,7 +10,7 @@ In recent years, there has been research on replacing multiplication operations.
 As a result, approaches like [AdderNet](https://arxiv.org/abs/1706.02393) replace multiplication in convolutions with addition, while [ShiftCNN](https://github.com/huawei-noah/AdderNet) represents weights as powers of two, allowing multiplication to be replaced with bit-shift operations.
 
 
-Furthermore, in recent research, some have replaced the Multiply-Accumulate (MAC) operations in matrix multiplication with table lookup and addition.
+Furthermore, in recent research, some have replaced the Multiply-Accumulate (MAC) operations in matrix multiplication with table lookup and addition ([source](https://github.com/dblalock/bolt/tree/master)).
 
 This research is a little complicated. If you find it interesting, further details are available [here](https://drive.google.com/file/d/1MWdCc87fbf3tu652l5MjYaCSlNwwaN5k/view?usp=sharing).
 
