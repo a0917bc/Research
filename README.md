@@ -18,11 +18,11 @@ This research is a little complicated. If you find it interesting, further detai
 
 This is a research-oriented project, without a complete usage guide yet, but I can explain what these files intend to do.
 
-demo.py: Compiles the model using TVM to find the optimal parameters (block size) for hardware and runs inference.
-prototype_learning.py: Initializes prototypes using KMCUDA.
-tensorrt_op.py: Attempts to compile the model using torch_tensorrt and runs it on the GPU after compilation.
-train.py and other files containing "train": Retrains the model after replacing the lookup-based matrix multiplication.
-OpCounter.ipynb: Measures the GFLOPs and model size after replacing the lookup-based matrix multiplication using thop.
+- demo.py: Compiles the model using TVM to find the optimal parameters (block size) for hardware and runs inference.
+- prototype_learning.py: Initializes prototypes using KMCUDA.
+- tensorrt_op.py: Attempts to compile the model using torch_tensorrt and runs it on the GPU after compilation.
+- train.py and other files containing "train": Retrains the model after replacing the lookup-based matrix multiplication.
+- OpCounter.ipynb: Measures the GFLOPs and model size after replacing the lookup-based matrix multiplication using thop.
 
 Short Flow:
 prototype_learning.py -> train.py -> demo.py
