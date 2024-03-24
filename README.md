@@ -30,10 +30,6 @@ prototype_learning.py -> train.py -> demo.py
 
 - Developed a comprehensive training pipeline, particularly effective in handling ImageNet.
 - Achieved a significant accuracy improvement of up to 10% by surpassing LUT-NN at MobiCom 2023.
-  
-## License
-
-This project is licensed under the [MIT License](https://opensource.org/licenses/MIT) - see the [LICENSE](LICENSE) file for details.
 
 ## Contact
 
